@@ -3,4 +3,4 @@ project(RISC_V)
 
 set(CMAKE_CXX_STANDARD 14)
 
-add_executable(code main.cpp memory.hpp register.hpp instruction.hpp type.hpp)
+add_executable(code main.cpp memory.hpp register.hpp instruction.hpp type.hpp predictor.hpp)

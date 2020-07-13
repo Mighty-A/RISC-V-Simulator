@@ -4,6 +4,8 @@
 #include "instruction.hpp"
 #include <string>
 
+
+
 int main() {
     // read to memory
     unsigned int address = 0;
@@ -21,36 +23,27 @@ int main() {
 
     // run
     Register.Setpc(Word(0));
-    Word ins;
-    while (true) {
-        AbstractIns* p;
-
-        Word pc = Register.Getpc();
-
-        ins = InstructionFetch(pc);
-
-        if (ins.u_num == 0x0ff00513) {
-            break;
+    while (Register.pc.num >= 0 || id_exe.p || exe_mem.p || mem_wb.p) {
+        if (WriteBack()) {                          // continue means stall here
+            continue;
         }
-
-        InstructionDecode(ins, p);
-
-        p->Execute();
-
-        p->MemoryAccess();
-
-        p->WriteBack();
-
-        if (!Register.jumpFlag) {
-            Register.Setpc(Register.Getpc().num + 4);
-        } else {
-            Register.jumpFlag = false;
-            //std::cout << "pc" << pc.num << std::endl;
-            //std::cout << memory.mem[0x1884] << std::endl;
+        if (MemoryAccess()) {
+            continue;
         }
-
-        delete p;
-    } ;
+        if (Execute()) {
+            continue;
+        }
+        if (InstructionDecode())  {
+            continue;
+        }
+        if (InstructionFetch()) {
+            continue;
+        }
+        if (if_id.ins.num == 0x0ff00513) {
+            if_id.ins.num = 0;
+            Register.Setpc(Word(-1));
+        }
+    };
 
     std::cout << (Register.GetReg(10).u_num & 255u) << std::endl;
 

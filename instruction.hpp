@@ -7,20 +7,45 @@
 
 #include "type.hpp"
 #include "memory.hpp"
+#include "predictor.hpp"
 /*
  * Abstract instructions
  */
+
 class AbstractIns {
 protected:
     Word _pc; // the current pc
 public:
-    AbstractIns() {
-        _pc = Register.Getpc();
+    int opcode;
+    AbstractIns(int opcode, Word pc) : opcode(opcode), _pc(pc) {
+
     }
     virtual void Execute() = 0;
     virtual void MemoryAccess() = 0;
     virtual void WriteBack() = 0;
+    virtual unsigned int GetRd() = 0;
+    virtual Word GetRes() = 0;
 };
+
+struct IF_ID {      // IF/ID Seg Register
+    Word ins;
+    Word pc;
+public:
+    IF_ID() = default;
+    IF_ID(Word ins, Word pc) : ins(ins), pc(pc) {}
+} if_id;
+
+struct ID_EXE {    // ID_EXE Seg Register
+    AbstractIns *p = nullptr;
+} id_exe;
+
+struct EXE_MEM {
+    AbstractIns *p = nullptr;
+} exe_mem;
+
+struct MEM_WB {
+    AbstractIns *p = nullptr;
+} mem_wb;
 
 class TypeRIns : public AbstractIns {
 private:
@@ -29,8 +54,8 @@ private:
     int funct7, funct3;
     int rd;
 public:
-    TypeRIns(int opcode, const Word& rs1, const Word& rs2, int funct3, int funct7, int rd) :
-        AbstractIns(),
+    TypeRIns(int opcode, const Word& rs1, const Word& rs2, int funct3, int funct7, int rd, Word pc) :
+        AbstractIns(opcode, pc),
         opcode(opcode),
         rs1(rs1),
         rs2(rs2),
@@ -70,21 +95,29 @@ public:
     }
 
     void WriteBack() override {             // WB
+        Register.used[rd] = false;
         Register.SetReg(rd, res);
     }
 
+    unsigned int GetRd() override {
+        return rd;
+    }
+
+    Word GetRes() override {
+        return res;
+    }
 };
 
 class TypeIIns : public AbstractIns {
-private:
+public:
     int opcode;
     Word rs1, imm11_0, res, t;
     int funct3;
     int rd;
     int address;
 public:
-    TypeIIns(int opcode, const Word& rs1, const Word& imm11_0, int funct3, int rd) :
-        AbstractIns(),
+    TypeIIns(int opcode, const Word& rs1, const Word& imm11_0, int funct3, int rd, Word pc) :
+        AbstractIns(opcode, pc),
         opcode(opcode),
         rs1(rs1),
         imm11_0(imm11_0),
@@ -165,14 +198,22 @@ public:
 
     void WriteBack() override { // WB
         if (opcode == 0x13) {
+            Register.used[rd] = false;
             Register.SetReg(rd, res);
         } else if (opcode == 0x3) {
+            Register.used[rd] = false;
             Register.SetReg(rd, res);
         } else if (opcode == 0x67) {
-            Register.Setpc(res);
-            Register.jumpFlag = true;
+            Register.used[rd] = false;
             Register.SetReg(rd, t);
         }
+    }
+    unsigned int GetRd() override {
+        return rd;
+    }
+
+    Word GetRes() override {
+        return res;
     }
 };
 
@@ -183,8 +224,8 @@ private:
     int rd;
     int funct3;
 public:
-    TypeSIns(int opcode, const Word& rs1, const Word& rs2, const Word& imm, int funct3) :
-        AbstractIns(),
+    TypeSIns(int opcode, const Word& rs1, const Word& rs2, const Word& imm, int funct3, Word pc) :
+        AbstractIns(opcode, pc),
         opcode(opcode),
         rs1(rs1),
         rs2(rs2),
@@ -218,6 +259,13 @@ public:
     void WriteBack() override {             // WB       // do nothing
 
     }
+    unsigned int GetRd() override {
+        return 0;
+    }
+
+    Word GetRes() override {
+        return res;
+    }
 };
 
 class TypeBIns : public AbstractIns {
@@ -226,14 +274,16 @@ private:
     Word rs1, rs2, imm;
     int funct3;
     bool flag;
+    bool ifBranch;
 public:
-    TypeBIns(int opcode, const Word& rs1, const Word& rs2, const Word& imm, int funct3) :
-        AbstractIns(),
+    TypeBIns(int opcode, const Word& rs1, const Word& rs2, const Word& imm, int funct3, Word pc, bool ifBranch) :
+        AbstractIns(opcode, pc),
         opcode(opcode),
         rs1(rs1),
         rs2(rs2),
         imm(imm),
-        funct3(funct3)
+        funct3(funct3),
+        ifBranch(ifBranch)
     {}
 
     void Execute() override {               // EXE
@@ -250,6 +300,15 @@ public:
         } else if (funct3 == 0x7) {                     // Branch if Greater Than or Equal, Unsigned
             flag = (rs1.u_num >= rs2.u_num);
         }
+        predictor.Update(flag);
+        if (ifBranch ^ flag) {             // reset pc and flush
+            if (flag) {
+                Register.Setpc(_pc.num + imm.num);
+            } else {
+                Register.Setpc(_pc.num + 4);\
+            }
+            if_id.ins = 0;
+        }
     }
 
     void MemoryAccess() override {          // MEM      // do nothing
@@ -257,10 +316,14 @@ public:
     }
 
     void WriteBack() override {             // WB
-        if (flag) {
-            Register.Setpc(Word(Register.Getpc().num + imm.num));
-            Register.jumpFlag = true;
-        }
+
+    }
+    unsigned int GetRd() override {
+        return 0;
+    }
+
+    Word GetRes() override {
+        return 0;
     }
 };
 
@@ -270,8 +333,8 @@ private:
     Word imm, res;
     int rd;
 public:
-    TypeUIns(int opcode, const Word& imm, int rd) :
-        AbstractIns(),
+    TypeUIns(int opcode, const Word& imm, int rd, Word pc) :
+        AbstractIns(opcode, pc),
         opcode(opcode),
         imm(imm),
         rd(rd)
@@ -280,7 +343,7 @@ public:
     void Execute() override {               // EXE
         if (opcode == 0x37) {                       // Load Upper Immediate
             res.num = (imm.u_num >> 12u) << 12u;
-        } else if (opcode == 0x17) {                // Add Upper Immediate to PC
+        } else if (opcode == 0x17) {                // Add Upper Immediate to PC        // maybe bug here
             res.num = _pc.num + (imm.u_num >> 12u) << 12u;
         }
     }
@@ -291,8 +354,15 @@ public:
 
     void WriteBack() override {             // WB
         Register.SetReg(rd, res);
+        Register.used[rd] = false;
+    }
+    unsigned int GetRd() override {
+        return rd;
     }
 
+    Word GetRes() override {
+        return res;
+    }
 };
 
 class TypeJIns : public AbstractIns {
@@ -301,8 +371,8 @@ private:
     Word imm, res;
     int rd;
 public:
-    TypeJIns(int opcode, const Word& imm, int rd) :
-        AbstractIns(),
+    TypeJIns(int opcode, const Word& imm, int rd, Word pc) :
+        AbstractIns(opcode, pc),
         opcode(opcode),
         imm(imm),
         rd(rd)
@@ -321,38 +391,76 @@ public:
 
     void WriteBack() override {             // WB
         Register.SetReg(rd, res);
-        Register.Setpc(_pc);
-        Register.jumpFlag = true;
+        Register.used[rd] = false;
+    }
+    unsigned int GetRd() override {
+        return rd;
+    }
+
+    Word GetRes() override {
+        return res;
     }
 };
 
-Word InstructionFetch(Word pc) {            // IF
-    int tmp = int(pc);
-    return Word(memory.mem[pc + 3].b, memory.mem[pc + 2].b, memory.mem[pc + 1].b, memory.mem[pc].b);
+
+bool InstructionFetch() {            // IF
+    Word pc = Register.Getpc();
+    if (pc.num < 0) {
+        return false;
+    }
+    if_id.ins = Word(memory.mem[pc + 3].b, memory.mem[pc + 2].b, memory.mem[pc + 1].b, memory.mem[pc].b);
+    if_id.pc = pc;
+    pc.num += 4;
+    Register.Setpc(pc);
+    return false;
 }
 
-void InstructionDecode(Word ins, AbstractIns *& p) {    // base pointer to the derived instruction
+bool InstructionDecode() {
+    if (if_id.ins == 0) {
+        return false;
+    }
+    Word ins = if_id.ins;
     int opcode = ins.num & 0x7F;
+    // visiting the memory require three cycle
+    if ((opcode == 0x3 || opcode == 0x23) && (exe_mem.p && (exe_mem.p->opcode == 0x3 || exe_mem.p->opcode == 0x23) ||
+                                                (mem_wb.p && (mem_wb.p->opcode == 0x3 || mem_wb.p->opcode == 0x23)))) {
+        return true;            // stall
+    }
     switch (opcode) {
         case 0x33:{           // Type R
             int funct7 = ins.num >> 25;
             int funct3 = (ins.num >> 12) & 0x7;
             int rd = (ins.num >> 7) & 0x1F;
+            if (Register.used[(ins.num >> 15) & 0x1F] || Register.used[(ins.num >> 20) & 0x1F] || Register.used[rd]) {
+                return true;
+            }
             Word rs1 = Register.GetReg((ins.num >> 15) & 0x1F);
             Word rs2 = Register.GetReg((ins.num >> 20) & 0x1F);
-            p = new TypeRIns(opcode, rs1, rs2, funct3, funct7, rd);
+            Register.used[rd] = true;
+            id_exe.p = new TypeRIns(opcode, rs1, rs2, funct3, funct7, rd, if_id.pc);
             break;
         }
         case 0x13:case 0x67: case 0x3:{                           // Type I
             int funct3 = (ins.u_num >> 12u) & 0x7;
             int rd = (ins.u_num >> 7u) & 0x1F;
+            if (Register.used[(ins.num >> 15) & 0x1F] || Register.used[rd]) {
+                return true;
+            }
             Word rs1 = Register.GetReg((ins.num >> 15) & 0x1F);
             Word imm11_0 = Word(ins.num >> 20);
-            p = new TypeIIns(opcode, rs1, imm11_0, funct3, rd);
+            Register.used[rd] = true;
+
+            if (opcode == 0x67) {           // JALR
+                Register.Setpc((rs1.num + imm11_0.num) & ~1u);
+            }
+            id_exe.p = new TypeIIns(opcode, rs1, imm11_0, funct3, rd, if_id.pc);
             break;
         }
         case 0x23:{                                     // Type S
             int funct3 = (ins.u_num >> 12) & 0x7;
+            if (Register.used[(ins.num >> 15) & 0x1F] || Register.used[(ins.num >> 20) & 0x1F]) {
+                return true;
+            }
             Word rs1 = Register.GetReg((ins.u_num >> 15) & 0x1F);
             Word rs2 = Register.GetReg((ins.u_num >> 20) & 0x1F);
             Word imm11_5 = Word(ins.u_num >> 25);
@@ -361,11 +469,14 @@ void InstructionDecode(Word ins, AbstractIns *& p) {    // base pointer to the d
             if (imm.u_num >> 11 == 1) {
                 imm.u_num |= 0xFFFFFu << 12u;
             }
-            p = new TypeSIns(opcode, rs1, rs2, imm, funct3);
+            id_exe.p = new TypeSIns(opcode, rs1, rs2, imm, funct3, if_id.pc);
             break;
         }
         case 0x63:{                                                // Type B
             int funct3 = (ins.num >> 12) & 0x7;
+            if (Register.used[(ins.num >> 15) & 0x1F] || Register.used[(ins.num >> 20) & 0x1F]) {
+                return true;
+            }
             Word rs1 = Register.GetReg((ins.u_num >> 15u) & 0x1Fu);
             Word rs2 = Register.GetReg((ins.u_num >> 20u) & 0x1Fu);
             Word imm12 = (ins.u_num >> 31u);
@@ -377,17 +488,24 @@ void InstructionDecode(Word ins, AbstractIns *& p) {    // base pointer to the d
             if (imm12.num == 1) {
                 imm.u_num |= (0xFFFFFu << 12u);
             }
-            p = new TypeBIns(opcode, rs1, rs2, imm, funct3);
+            bool ifBranch = predictor.IfBranch();
+            if (ifBranch) {
+                Register.Setpc(Word(if_id.pc.num + imm.num));
+            }
+            id_exe.p = new TypeBIns(opcode, rs1, rs2, imm, funct3, if_id.pc, ifBranch);
             break;
         }
         case 0x37: case 0x17:{                                  //  Type U
             int rd = (ins.num >> 7) & 0x1F;
             Word imm(0);
+            if (Register.used[rd])
+                return true;
             imm.u_num = (ins.u_num >> 12u) << 12u;
-            p = new TypeUIns(opcode, imm, rd);
+            Register.used[rd] = true;
+            id_exe.p = new TypeUIns(opcode, imm, rd, if_id.pc);
             break;
         }
-        case 0x6F:{                                              // Type J
+        case 0x6F:{                                              // Type J          // JAL change pc in ID
             int rd = (ins.u_num >> 7) & 0x1F;
             Word imm20 = ins.u_num >> 31;
             Word imm10_1 = (ins.u_num >> 21) & 0x3FF;
@@ -395,10 +513,41 @@ void InstructionDecode(Word ins, AbstractIns *& p) {    // base pointer to the d
             Word imm19_12 = (ins.u_num >> 12) & 0xFF;
             Word imm(0);
             imm.u_num = (imm10_1.u_num << 1) | (imm11.u_num << 11) | (imm19_12.u_num << 12) | (imm20.u_num == 1 ? 0xFFF00000 : 0);
-            p = new TypeJIns(opcode, imm, rd);
+            Register.used[rd] = true;
+
+            Register.Setpc(if_id.pc.num + imm.num);                 // change pc in advance
+
+            id_exe.p = new TypeJIns(opcode, imm, rd, if_id.pc);
+            break;
         }
     }
-
+    return false;
 }
 
+bool Execute() {
+    if (id_exe.p) {
+        id_exe.p->Execute();
+        exe_mem.p = id_exe.p;
+        id_exe.p = nullptr;
+    }
+    return false;
+}
+
+bool MemoryAccess() {
+    if (exe_mem.p) {
+        exe_mem.p->MemoryAccess();
+        mem_wb.p = exe_mem.p;
+        exe_mem.p = nullptr;
+    }
+    return false;
+}
+
+bool WriteBack() {
+    if (mem_wb.p) {
+        mem_wb.p->WriteBack();
+        delete mem_wb.p;
+        mem_wb.p = nullptr;
+    }
+    return false;
+}
 #endif //RISC_V_INSTRUCTION_HPP

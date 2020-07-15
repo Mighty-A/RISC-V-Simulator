@@ -300,7 +300,7 @@ public:
         } else if (funct3 == 0x7) {                     // Branch if Greater Than or Equal, Unsigned
             flag = (rs1.u_num >= rs2.u_num);
         }
-        predictor.Update(flag);
+        predictor[_pc.num % 32].Update(flag);
         if (ifBranch ^ flag) {             // reset pc and flush
             if (flag) {
                 Register.Setpc(_pc.num + imm.num);
@@ -488,7 +488,7 @@ bool InstructionDecode() {
             if (imm12.num == 1) {
                 imm.u_num |= (0xFFFFFu << 12u);
             }
-            bool ifBranch = predictor.IfBranch();
+            bool ifBranch = predictor[if_id.pc.num % 32].IfBranch();
             if (ifBranch) {
                 Register.Setpc(Word(if_id.pc.num + imm.num));
             }

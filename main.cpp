@@ -46,6 +46,11 @@ int main() {
     };
 
     std::cout << (Register.GetReg(10).u_num & 255u) << std::endl;
-
+    int count = 0, countCorrect = 0;
+    for (int i = 0; i < 32; i++) {
+        count += predictor[i].count;
+        countCorrect += predictor[i].countCorrect;
+    }
+    //std::cout << double(countCorrect) / double(count) << std::endl;
     return 0;
 }

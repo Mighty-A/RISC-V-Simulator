@@ -5,10 +5,10 @@
 #ifndef RISC_V_PREDICTOR_HPP
 #define RISC_V_PREDICTOR_HPP
 class Predictor {
+public:
     int status;
     int count;
     int countCorrect;
-public:
     Predictor() : status(0), count(0), countCorrect(0){
     }
 
@@ -38,5 +38,5 @@ public:
             }
         }
     }
-} predictor;
+} predictor[32];
 #endif //RISC_V_PREDICTOR_HPP
